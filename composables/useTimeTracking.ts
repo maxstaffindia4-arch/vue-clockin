@@ -1,101 +1,69 @@
 export const useTimeTracking = () => {
-  const currentStatus = ref<'out' | 'in'>('out')
-  const clockInTime = ref<Date | null>(null)
-  const clockOutTime = ref<Date | null>(null)
-  const todayHours = ref(0)
   const timeEntries = ref<any[]>([])
+  const todayEntries = ref<any[]>([])
 
-  const clockIn = (employeeId: string) => {
+  const processEmployeeScan = (employeeId: string) => {
     const now = new Date()
-    clockInTime.value = now
-    clockOutTime.value = null
-    currentStatus.value = 'in'
+    const today = now.toDateString()
+    
+    // Check if employee has an active clock-in today
+    const activeEntry = timeEntries.value.find(entry => 
+      entry.employeeId === employeeId && 
+      entry.date === today && 
+      entry.status === 'in'
+    )
 
-    const entry = {
-      id: Date.now(),
-      employeeId,
-      date: now.toDateString(),
-      clockIn: now.toISOString(),
-      clockOut: null,
-      hours: 0,
-      status: 'in'
-    }
-
-    if (process.client) {
-      const entries = JSON.parse(localStorage.getItem('timeEntries') || '[]')
-      entries.push(entry)
-      localStorage.setItem('timeEntries', JSON.stringify(entries))
-      localStorage.setItem('currentStatus', JSON.stringify({
-        status: 'in',
-        clockInTime: now.toISOString(),
-        employeeId
-      }))
-    }
-
-    loadTimeEntries(employeeId)
-  }
-
-  const clockOut = (employeeId: string) => {
-    if (!clockInTime.value) return
-
-    const now = new Date()
-    clockOutTime.value = now
-    currentStatus.value = 'out'
-
-    const hours = (now.getTime() - clockInTime.value.getTime()) / (1000 * 60 * 60)
-
-    if (process.client) {
-      const entries = JSON.parse(localStorage.getItem('timeEntries') || '[]')
-      const todayEntry = entries.find((entry: any) => 
-        entry.employeeId === employeeId && 
-        entry.date === now.toDateString() && 
-        entry.status === 'in'
-      )
-
-      if (todayEntry) {
-        todayEntry.clockOut = now.toISOString()
-        todayEntry.hours = hours
-        todayEntry.status = 'out'
-        localStorage.setItem('timeEntries', JSON.stringify(entries))
+    if (activeEntry) {
+      // Clock out
+      activeEntry.clockOut = now.toISOString()
+      activeEntry.status = 'out'
+      activeEntry.hours = (now.getTime() - new Date(activeEntry.clockIn).getTime()) / (1000 * 60 * 60)
+      
+      if (process.client) {
+        localStorage.setItem('timeEntries', JSON.stringify(timeEntries.value))
+      }
+      
+      loadTodayEntries()
+      return { action: 'clockOut', employee: employeeId, time: now }
+    } else {
+      // Clock in
+      const entry = {
+        id: Date.now(),
+        employeeId,
+        date: today,
+        clockIn: now.toISOString(),
+        clockOut: null,
+        hours: 0,
+        status: 'in'
       }
 
-      localStorage.removeItem('currentStatus')
+      timeEntries.value.push(entry)
+      
+      if (process.client) {
+        localStorage.setItem('timeEntries', JSON.stringify(timeEntries.value))
+      }
+      
+      loadTodayEntries()
+      return { action: 'clockIn', employee: employeeId, time: now }
     }
-
-    clockInTime.value = null
-    loadTimeEntries(employeeId)
   }
 
-  const loadTimeEntries = (employeeId: string) => {
+  const loadTimeEntries = () => {
     if (!process.client) return
 
     const entries = JSON.parse(localStorage.getItem('timeEntries') || '[]')
-    timeEntries.value = entries
-      .filter((entry: any) => entry.employeeId === employeeId)
-      .sort((a: any, b: any) => new Date(b.clockIn).getTime() - new Date(a.clockIn).getTime())
-
-    // Calculate today's hours
-    const today = new Date().toDateString()
-    const todayEntries = entries.filter((entry: any) => 
-      entry.employeeId === employeeId && 
-      entry.date === today &&
-      entry.status === 'out'
+    timeEntries.value = entries.sort((a: any, b: any) => 
+      new Date(b.clockIn).getTime() - new Date(a.clockIn).getTime()
     )
     
-    todayHours.value = todayEntries.reduce((total: number, entry: any) => total + entry.hours, 0)
+    loadTodayEntries()
   }
 
-  const checkCurrentStatus = (employeeId: string) => {
-    if (!process.client) return
-
-    const status = localStorage.getItem('currentStatus')
-    if (status) {
-      const parsed = JSON.parse(status)
-      if (parsed.employeeId === employeeId && parsed.status === 'in') {
-        currentStatus.value = 'in'
-        clockInTime.value = new Date(parsed.clockInTime)
-      }
-    }
+  const loadTodayEntries = () => {
+    const today = new Date().toDateString()
+    todayEntries.value = timeEntries.value
+      .filter(entry => entry.date === today)
+      .sort((a: any, b: any) => new Date(b.clockIn).getTime() - new Date(a.clockIn).getTime())
   }
 
   const formatTime = (date: Date | string) => {
@@ -112,17 +80,35 @@ export const useTimeTracking = () => {
     return `${h}h ${m}m`
   }
 
+  const getEmployeeStatus = (employeeId: string) => {
+    const today = new Date().toDateString()
+    const activeEntry = timeEntries.value.find(entry => 
+      entry.employeeId === employeeId && 
+      entry.date === today && 
+      entry.status === 'in'
+    )
+    return activeEntry ? 'in' : 'out'
+  }
+
+  const getTodayHours = (employeeId: string) => {
+    const today = new Date().toDateString()
+    const todayEntries = timeEntries.value.filter(entry => 
+      entry.employeeId === employeeId && 
+      entry.date === today &&
+      entry.status === 'out'
+    )
+    
+    return todayEntries.reduce((total, entry) => total + entry.hours, 0)
+  }
+
   return {
-    currentStatus: readonly(currentStatus),
-    clockInTime: readonly(clockInTime),
-    clockOutTime: readonly(clockOutTime),
-    todayHours: readonly(todayHours),
     timeEntries: readonly(timeEntries),
-    clockIn,
-    clockOut,
+    todayEntries: readonly(todayEntries),
+    processEmployeeScan,
     loadTimeEntries,
-    checkCurrentStatus,
     formatTime,
-    formatHours
+    formatHours,
+    getEmployeeStatus,
+    getTodayHours
   }
 }
