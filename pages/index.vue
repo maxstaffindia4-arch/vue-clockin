@@ -95,7 +95,7 @@
               <div>
                 <p class="font-semibold text-gray-900">{{ entry.employeeId }}</p>
                 <p class="text-sm text-gray-600">
-                  {{ entry.status === 'in' ? 'Clocked In' : 'Clocked Out' }} at {{ formatTime(entry.status === 'in' ? entry.clockIn : entry.clockOut) }}
+                  {{ entry.status === 'in' ? 'Clocked In' : 'Clocked Out' }} at {{ formatTime(entry.status === 'in' ? entry.clockIn : (entry.clockOut || '')) }}
                 </p>
                 <p v-if="entry.status === 'out' && entry.hours > 0" class="text-xs text-gray-500">
                   Worked {{ formatHours(entry.hours) }}
@@ -182,6 +182,9 @@
 </template>
 
 <script setup lang="ts">
+import { ref, computed, onMounted, nextTick } from 'vue';
+import { useTimeTracking } from '~/composables/useTimeTracking';
+
 const { 
   timeEntries,
   todayEntries,
@@ -189,101 +192,101 @@ const {
   loadTimeEntries,
   formatTime,
   formatHours
-} = useTimeTracking()
+} = useTimeTracking();
 
-const scannedId = ref('')
-const scannerInput = ref()
-const currentTime = ref('')
-const currentDate = ref('')
-const lastAction = ref<any>(null)
-const showAllEntries = ref(false)
+const scannedId = ref('');
+const scannerInput = ref<HTMLInputElement | null>(null);
+const currentTime = ref('');
+const currentDate = ref('');
+const lastAction = ref<{ success: boolean; message: string } | null>(null);
+const showAllEntries = ref(false);
 
 const currentlyClockedIn = computed(() => {
-  return todayEntries.value.filter(entry => entry.status === 'in')
-})
+  return todayEntries.value.filter(entry => entry.status === 'in');
+});
 
 const recentActivity = computed(() => {
-  return todayEntries.value.slice(0, 10)
-})
+  return todayEntries.value.slice(0, 10);
+});
 
 const displayedEntries = computed(() => {
-  return showAllEntries.value ? timeEntries.value : timeEntries.value.slice(0, 10)
-})
+  return showAllEntries.value ? timeEntries.value : timeEntries.value.slice(0, 10);
+});
 
-const handleScan = () => {
-  const employeeId = scannedId.value.trim()
+const handleScan = async () => {
+  const employeeId = scannedId.value.trim();
   
   if (!employeeId) {
     lastAction.value = {
       success: false,
       message: 'Please scan a barcode or enter an Employee ID'
-    }
-    return
+    };
+    return;
   }
 
   try {
-    const result = processEmployeeScan(employeeId)
+      const result = await processEmployeeScan(employeeId);
     
     lastAction.value = {
       success: true,
       message: `Employee ${result.employee} successfully ${result.action === 'clockIn' ? 'clocked in' : 'clocked out'} at ${formatTime(result.time)}`
-    }
+    };
     
     // Clear the input and refocus
-    scannedId.value = ''
+    scannedId.value = '';
     nextTick(() => {
-      scannerInput.value?.focus()
-    })
+      scannerInput.value?.focus();
+    });
     
     // Clear message after 5 seconds
     setTimeout(() => {
-      lastAction.value = null
-    }, 5000)
+      lastAction.value = null;
+    }, 5000);
     
   } catch (error) {
     lastAction.value = {
       success: false,
       message: 'Error processing scan. Please try again.'
-    }
+    };
   }
-}
+};
 
 const updateCurrentTime = () => {
-  const now = new Date()
+  const now = new Date();
   currentTime.value = now.toLocaleTimeString('en-US', {
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
     hour12: true
-  })
+  });
   currentDate.value = now.toLocaleDateString('en-US', {
     weekday: 'long',
     year: 'numeric',
     month: 'long',
     day: 'numeric'
-  })
-}
+  });
+};
 
 // Keep scanner input focused
 const maintainFocus = () => {
   if (scannerInput.value && document.activeElement !== scannerInput.value) {
-    scannerInput.value.focus()
+    scannerInput.value.focus();
   }
-}
+};
 
-onMounted(() => {
-  loadTimeEntries()
-  updateCurrentTime()
-  setInterval(updateCurrentTime, 1000)
+onMounted(async () => {
+  await loadTimeEntries();
+  updateCurrentTime();
+  setInterval(updateCurrentTime, 1000);
   
   // Maintain focus on scanner input
-  setInterval(maintainFocus, 1000)
+  setInterval(maintainFocus, 1000);
   
   // Global keydown listener for barcode scanners
   document.addEventListener('keydown', (e) => {
     if (e.target !== scannerInput.value) {
-      scannerInput.value?.focus()
+      scannerInput.value?.focus();
     }
-  })
-})
+  });
+});
 </script>

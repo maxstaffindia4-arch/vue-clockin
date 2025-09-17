@@ -1,105 +1,95 @@
+import { readonly, ref } from 'vue';
+import { useDb, type TimeEntry } from './useDb';
+
 export const useTimeTracking = () => {
-  const timeEntries = ref<any[]>([])
-  const todayEntries = ref<any[]>([])
+  const { db } = useDb();
+  const timeEntries = ref<TimeEntry[]>([]);
+  const todayEntries = ref<TimeEntry[]>([]);
 
-  const processEmployeeScan = (employeeId: string) => {
-    const now = new Date()
-    const today = now.toDateString()
-    
-    // Check if employee has an active clock-in today
-    const activeEntry = timeEntries.value.find(entry => 
-      entry.employeeId === employeeId && 
-      entry.date === today && 
-      entry.status === 'in'
-    )
+  const processEmployeeScan = async (employeeId: string) => {
+    const now = new Date();
+    const today = now.toDateString();
 
-    if (activeEntry) {
+    const activeEntry = await db.timeEntries
+      .where('employeeId').equals(employeeId)
+      .and(entry => entry.date === today && entry.status === 'in')
+      .first();
+
+    if (activeEntry && activeEntry.id) {
       // Clock out
-      activeEntry.clockOut = now.toISOString()
-      activeEntry.status = 'out'
-      activeEntry.hours = (now.getTime() - new Date(activeEntry.clockIn).getTime()) / (1000 * 60 * 60)
-      
-      if (process.client) {
-        localStorage.setItem('timeEntries', JSON.stringify(timeEntries.value))
-      }
-      
-      loadTodayEntries()
-      return { action: 'clockOut', employee: employeeId, time: now }
+      const clockInTime = new Date(activeEntry.clockIn).getTime();
+      const hours = (now.getTime() - clockInTime) / (1000 * 60 * 60);
+      await db.timeEntries.update(activeEntry.id, {
+        clockOut: now.toISOString(),
+        status: 'out',
+        hours,
+      });
+
+      await loadTodayEntries();
+      return { action: 'clockOut', employee: employeeId, time: now };
     } else {
       // Clock in
-      const entry = {
-        id: Date.now(),
+      const entry: TimeEntry = {
         employeeId,
         date: today,
         clockIn: now.toISOString(),
-        clockOut: null,
         hours: 0,
-        status: 'in'
-      }
+        status: 'in',
+      };
 
-      timeEntries.value.push(entry)
-      
-      if (process.client) {
-        localStorage.setItem('timeEntries', JSON.stringify(timeEntries.value))
-      }
-      
-      loadTodayEntries()
-      return { action: 'clockIn', employee: employeeId, time: now }
+      await db.timeEntries.add(entry);
+
+      await loadTodayEntries();
+      return { action: 'clockIn', employee: employeeId, time: now };
     }
-  }
+  };
 
-  const loadTimeEntries = () => {
-    if (!process.client) return
+  const loadTimeEntries = async () => {
+    const entries = await db.timeEntries.orderBy('clockIn').reverse().toArray();
+    timeEntries.value = entries;
+    await loadTodayEntries();
+  };
 
-    const entries = JSON.parse(localStorage.getItem('timeEntries') || '[]')
-    timeEntries.value = entries.sort((a: any, b: any) => 
-      new Date(b.clockIn).getTime() - new Date(a.clockIn).getTime()
-    )
-    
-    loadTodayEntries()
-  }
-
-  const loadTodayEntries = () => {
-    const today = new Date().toDateString()
-    todayEntries.value = timeEntries.value
-      .filter(entry => entry.date === today)
-      .sort((a: any, b: any) => new Date(b.clockIn).getTime() - new Date(a.clockIn).getTime())
-  }
+  const loadTodayEntries = async () => {
+    const today = new Date().toDateString();
+    todayEntries.value = await db.timeEntries
+      .where('date').equals(today)
+      .reverse()
+      .sortBy('clockIn');
+  };
 
   const formatTime = (date: Date | string) => {
     return new Date(date).toLocaleTimeString('en-US', {
       hour: '2-digit',
       minute: '2-digit',
-      hour12: true
-    })
-  }
+      hour12: true,
+    });
+  };
 
   const formatHours = (hours: number) => {
-    const h = Math.floor(hours)
-    const m = Math.round((hours - h) * 60)
-    return `${h}h ${m}m`
-  }
+    const h = Math.floor(hours);
+    const m = Math.round((hours - h) * 60);
+    return `${h}h ${m}m`;
+  };
 
-  const getEmployeeStatus = (employeeId: string) => {
-    const today = new Date().toDateString()
-    const activeEntry = timeEntries.value.find(entry => 
-      entry.employeeId === employeeId && 
-      entry.date === today && 
-      entry.status === 'in'
-    )
-    return activeEntry ? 'in' : 'out'
-  }
+  const getEmployeeStatus = async (employeeId: string) => {
+    const today = new Date().toDateString();
+    const activeEntry = await db.timeEntries
+      .where('employeeId').equals(employeeId)
+      .and(entry => entry.date === today && entry.status === 'in')
+      .first();
+    return activeEntry ? 'in' : 'out';
+  };
 
-  const getTodayHours = (employeeId: string) => {
-    const today = new Date().toDateString()
-    const todayEntries = timeEntries.value.filter(entry => 
-      entry.employeeId === employeeId && 
-      entry.date === today &&
-      entry.status === 'out'
-    )
-    
-    return todayEntries.reduce((total, entry) => total + entry.hours, 0)
-  }
+  const getTodayHours = async (employeeId: string) => {
+    const today = new Date().toDateString();
+    const entries = await db.timeEntries
+      .where('employeeId').equals(employeeId)
+      .and(entry => entry.date === today && entry.status === 'out')
+      .toArray();
+
+    return entries.reduce((total, entry) => total + entry.hours, 0);
+  };
 
   return {
     timeEntries: readonly(timeEntries),
@@ -109,6 +99,6 @@ export const useTimeTracking = () => {
     formatTime,
     formatHours,
     getEmployeeStatus,
-    getTodayHours
-  }
-}
+    getTodayHours,
+  };
+};
